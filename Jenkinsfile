@@ -22,10 +22,15 @@ pipeline {
         timestamps()
     }
     stages {
+        stage ('Prepare environment') {
+            steps {
+                installCustomTools()
+            }
+        }
         stage ('Build') {
             steps {
                 configFileProvider([configFile(fileId: "${mavenSettingsId}", variable: 'MAVEN_SETTINGS_XML')]) {
-                    sh "mvn -s $MAVEN_SETTINGS_XML ${mavenAdditionalSettingsBuild} clean package"
+                    sh "mvn -s $MAVEN_SETTINGS_XML ${mavenAdditionalSettingsBuild} clean package -Pintegration"
                 }
             }
         }
