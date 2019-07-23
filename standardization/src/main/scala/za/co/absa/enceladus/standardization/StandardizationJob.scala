@@ -130,43 +130,70 @@ object StandardizationJob {
 
   private def readerFormatSpecific(dfReader: DataFrameReader, cmd: CmdConfig, dataset: Dataset): DataFrameReader = {
     // applying format specific options
-    val dfReaderWithOptions = {
-      val dfr1 = if (cmd.rowTag.isDefined) dfReader.option("rowTag", cmd.rowTag.get) else dfReader
-      val dfr2 = if (cmd.csvDelimiter.isDefined) dfr1.option("delimiter", cmd.csvDelimiter.get) else dfr1
-      val dfr3 = if (cmd.csvHeader.isDefined) dfr2.option("header", cmd.csvHeader.get) else dfr2
-      val dfr4 = if (cmd.rawFormat.equalsIgnoreCase("cobol")) applyCobolOptions(dfr3, cmd, dataset) else dfr3
-      dfr4
-    }
-    if (cmd.rawFormat.equalsIgnoreCase("fixed-width")) {
-      val dfWithFixedWithOptions = if (cmd.fixedWidthTrimValues.get) {
-        dfReaderWithOptions.option("trimValues", "true")
-      } else {
-        dfReaderWithOptions
+    val options = getCobolOptions(cmd, dataset) :::
+      getGenericOptions(cmd) :::
+      getXmlOptions(cmd) :::
+      getCsvOptions(cmd) :::
+      getFixedWidthOptions(cmd)
+
+    // Applying all the options
+    options.foldLeft(dfReader)((df, optionPair) => {
+      optionPair match {
+        case (valueOpt, key) =>
+          valueOpt match {
+            case Some(value) =>
+              value match {
+                case s: String => df.option(key, s)
+                case b: Boolean => df.option(key, b)
+              }
+            case None => df
+          }
       }
-      dfWithFixedWithOptions
-    } else {
-      dfReaderWithOptions
+    })
+  }
+
+  private def getGenericOptions(cmd: CmdConfig): List[(Option[Any], String)] = {
+    (cmd.charset, "charset") :: Nil
+  }
+
+  private def getXmlOptions(cmd: CmdConfig): List[(Option[Any], String)] = {
+    (cmd.rowTag, "rowtag") :: Nil
+  }
+
+  private def getCsvOptions(cmd: CmdConfig): List[(Option[Any], String)] = {
+    (cmd.csvDelimiter, "delimiter") ::
+    (cmd.csvHeader, "header") ::
+    (cmd.csvQuote, "quote") ::
+    (cmd.csvEscape, "escape") ::
+    Nil
+  }
+
+  private def getFixedWidthOptions(cmd: CmdConfig): List[(Option[Any], String)] = {
+    (cmd.fixedWidthTrimValues, "trimValues") :: Nil
+  }
+
+  private def getCobolOptions(cmd: CmdConfig, dataset: Dataset): List[(Option[Any], String)] = {
+    cmd.cobolOptions match {
+      case Some(opts) =>
+        getCopybookOption(opts, dataset) ::
+        (Option(opts.isXcom), "is_xcom") ::
+        (Some("collapse_root"), "schema_retention_policy") ::
+        Nil
+      case None =>
+        Nil
     }
   }
 
-  private def applyCobolOptions(dfReader: DataFrameReader,
-                                cmd: CmdConfig,
-                                dataset: Dataset): DataFrameReader = {
-    val isXcom = cmd.cobolOptions.exists(_.isXcom)
-    val copybook = cmd.cobolOptions.map(_.copybook).getOrElse("")
-
-    val reader = dfReader
-      .option("is_xcom", isXcom)
-      .option("schema_retention_policy", "collapse_root")
-
+  private def getCopybookOption(opts: CobolOptions, dataset: Dataset): (Option[String], String) = {
+    val copybook = opts.copybook
     if (copybook.isEmpty) {
       log.info("Copybook location is not provided via command line - fetching the copybook attached to the schema...")
       val copybookContents = EnceladusRestDAO.getSchemaAttachment(dataset.schemaName, dataset.schemaVersion)
       log.info(s"Applying the following copybook:\n$copybookContents")
-      reader.option("copybook_contents", copybookContents)
+      (Option(copybookContents), "copybook_contents")
     } else {
       log.info(s"Use copybook at $copybook")
-      reader.option("copybook", copybook)
+      (Option(copybook), "copybook")
     }
   }
 
